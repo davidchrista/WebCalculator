@@ -1,5 +1,7 @@
 #!/usr/bin/env groovy
 
+// Jenkins pipeline declarative version
+
 pipeline {
 	agent any
 
@@ -8,65 +10,89 @@ pipeline {
 	}
 
 	stages {
-		stage('Checkout') {
+		stage('Checkout SCM') {
+			when { anyOf { branch 'devel'; branch 'master'; branch 'feature/*' } }
 			steps {
-				git 'git@192.168.1.203:ARetsc/WebCalculator.git'
+				git credentialsId: 'git_ssh_key',
+				url: 'ssh://git@git.arbeglanretsc.com:2222/david/WebCalculator.git'
 			}
 		}
 
-		stage('Cleanup') {
-			steps {
-				sh 'gradle clean'
-			}
+		stage('Gradle clean') {
+			when { anyOf { branch 'devel'; branch 'master'; branch 'feature/*' } }
+			steps { sh 'gradle clean --no-daemon' }
 		}
 
-		stage('Gradle Build') {
-			steps {
-				sh 'gradle assemble'
-			}
+		stage('Gradle check') {
+			when { anyOf { branch 'devel'; branch 'master'; branch 'feature/*' } }
+			steps { sh 'gradle check --no-daemon' }
 		}
 
-		stage('Gradle Unit Tests') {
-			when {
-				expression {
-					currentBuild.result == null || currentBuild.result == 'SUCCESS'
-				}
-			}
-			steps {
-				sh 'gradle check'
-			}
+		stage('Gradle build') {
+			when { anyOf { branch 'devel'; branch 'master' } }
+			steps { sh 'gradle build --no-daemon' }
 		}
 
-		stage('Clone Deploy Repo')
-		{
+		stage('Build test container') {
 			when {
 				allOf {
-					not {
-						branch 'master'
-					}
-					expression {
-						currentBuild.result == null || currentBuild.result == 'SUCCESS'
-					}
+					expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' };
+					branch 'devel'
 				}
 			}
 			steps {
-				git 'git@localhost:ARetsc/WebCalculator-Deploy.git'
+				script {
+					docker.withRegistry('https://registry.arbeglanretsc.com', 'docker_reg_key') {
+						def image = docker.build('webcalculator:latest', '--no-cache .')
+						image.push('latest')
+					}
+					sh 'docker image prune -f'
+				}
 			}
 		}
 
-		stage('Build Test Container') {
+		stage('Run test container on test environment') {
 			when {
 				allOf {
-					not {
-						branch 'master'
-					}
-					expression {
-						currentBuild.result == null || currentBuild.result == 'SUCCESS'
-					}
+					expression { currentBuild.result == null || currentBuild.result == 'SUCCESS'};
+					branch 'devel'
 				}
 			}
 			steps {
-				sh 'ls -la'
+				script {
+					docker.withServer('utility.arbeglanretsc.com:2376', 'tls_client_cert') {
+						sh '''
+							if docker container ls | grep -q webcalculator; then
+								docker container stop webcalculator
+								docker container rm -f webcalculator
+								docker image rm -f registry.arbeglanretsc.com/webcalculator:latest
+							fi
+						'''
+						docker.withRegistry('https://registry.arbeglanretsc.com', 'docker_reg_key') {
+							def image = docker.image('registry.arbeglanretsc.com/webcalculator:latest')
+							image.pull()
+							image.run(['--publish 8081:8081 --name webcalculator'])
+						}
+					}
+				}
+			}
+		}
+
+		stage('Build prod container') {
+			when {
+				allOf {
+					expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' };
+					branch 'master'
+				}
+			}
+			steps {
+				script {
+					docker.withRegistry('https://registry.arbeglanretsc.com', 'docker_reg_key') {
+						def image = docker.build("webcalculator:rev${env.BUILD_ID}", '--no-cache .')
+						image.push("rev${env.BUILD_ID}")
+					}
+					sh 'docker image prune -f'
+				}
 			}
 		}
 	}

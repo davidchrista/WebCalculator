@@ -1,0 +1,22 @@
+version: "3.3"
+
+networks:
+
+  webcalcnet:
+    external: true
+
+  internal:
+    external: false
+
+services:
+
+  webcalculator:
+    container_name: webcalculator
+    build: .
+    image: registry.arbeglanretsc.com/webcalculator:latest
+    restart: always
+    ports:
+      - "8081:8081"
+    networks:
+      - internal
+      - webcalcnet

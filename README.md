@@ -1,3 +1,4 @@
 # WebCalculator
 
-Test project with a simple REST API, Spring Boot, Jenkins, Docker
+-----------------
+Last edited: Fr 30. Jul 21:37:33 CEST 2021
